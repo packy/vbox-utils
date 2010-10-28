@@ -139,6 +139,7 @@ vboxheadless_vmstart() {
   if [ "$PORT" != "" ]; then
     log "Starting VM: $VM (vnc port $PORT)..."
     $SU "$NOHUP $VBOXHEADLESS --vnc --vncport $PORT --startvm $VM $OUTPUT &"
+    vboxheadless_register_avahi "$VM"
   else
     echo "Starting VM: $VM (no vnc)..."
     $SU "$NOHUP $VBOXHEADLESS --startvm $VM $OUTPUT &"
@@ -152,6 +153,7 @@ vboxheadless_vmstop() {
   VM=$1
   log "Stopping VM: $VM ..."
   $SU "$VBOXMANAGE controlvm \"$VM\" acpipowerbutton"
+  vboxheadless_deregister_avahi "$VM"
 }
 
 ###############################################################################
