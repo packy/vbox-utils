@@ -47,6 +47,7 @@ export PATH="${PATH:+$PATH:}/bin:/usr/bin:/usr/sbin:/sbin"
 SU="su $VM_USER -c"
 VBOXMANAGE="VBoxManage -nologo"
 VBOXHEADLESS="VBoxHeadless"
+AVAHI="avahi-daemon"
 NOHUP="nohup"
 
 ###############################################################################
@@ -91,6 +92,40 @@ if (exists $ports{$vm}) {
 }
 ' "$VM" "$vboxheadless_vnc_ports")
   echo $PORT
+}
+
+vboxheadless_register_avahi() {
+  local VM
+  VM=$1
+  if checkyesno avahi_daemon_enable ; then
+    PORT=$(vboxheadless_getport $VM)
+    FILE="/usr/local/etc/avahi/services/rfb-$VM.service"
+    log "Registering vnc port $PORT for $VM with Avahi"
+    cat <<SERVICE >$FILE
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="no">$VM</name>
+  <service>
+    <type>_rfb._tcp</type>
+    <port>$PORT</port>
+  </service>
+</service-group>
+SERVICE
+    $AVAHI --reload
+  fi
+}
+
+vboxheadless_deregister_avahi() {
+  local VM
+  VM=$1
+  if checkyesno avahi_daemon_enable ; then
+    PORT=$(vboxheadless_getport $VM)
+    FILE="/usr/local/etc/avahi/services/rfb-$VM.service"
+    log "Deregistering vnc port $PORT for $VM with Avahi"
+    rm -f $FILE
+    $AVAHI --reload
+  fi
 }
 
 ###############################################################################
