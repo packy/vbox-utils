@@ -1,0 +1,184 @@
+#! /bin/sh
+# REQUIRE: LOGIN vboxnet
+# PROVIDE: vboxheadless
+# KEYWORD: nojail shutdown
+#
+# vboxheadless   Startup script for VirtualBox Virtual Machines
+#
+# description: Manages VirtualBox VMs
+# processname: vboxheadless
+#
+#
+# Version 20101023 by Packy Anderson based on:
+# Version 20090301 by Kevin Swanson <kswan.info> based on:
+# Version 2008051100 by Jochem Kossen <jochem.kossen@gmail.com>
+# http://farfewertoes.com
+#
+# Released in the public domain
+#
+
+# Source function library.
+. /etc/rc.subr
+
+###############################################################################
+# rc.d configuration
+name="vboxheadless"
+rcvar=`set_rcvar`
+pidfile="/var/run/vboxheadless/vboxheadless.pid"
+
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+vmstart_cmd="${name}_vmstart"
+vmstop_cmd="${name}_vmstop"
+vmpower_cmd="${name}_vmpower"
+status_cmd="${name}_status"
+extra_commands="vmstart vmstop vmpower status"
+
+load_rc_config $name
+eval "${rcvar}=\${${rcvar}:-'NO'}"
+
+###############################################################################
+# internal variables
+VBOXDIR="/etc/virtualbox"
+VM_USER="vbox"
+
+export PATH="${PATH:+$PATH:}/bin:/usr/bin:/usr/sbin:/sbin"
+
+SU="su $VM_USER -c"
+VBOXMANAGE="VBoxManage -nologo"
+VBOXHEADLESS="VBoxHeadless"
+NOHUP="nohup"
+
+###############################################################################
+
+ts() { # timestamp format
+  date "+%Y-%m-%d %H:%M:%S - "
+}
+
+###############################################################################
+
+logfile() {
+  local VM
+  VM=$1
+  echo "/var/log/vbox.$VM.log"
+}
+
+###############################################################################
+
+log() {
+  local VM,MSG
+  VM=$1
+  MSG=$2
+  LOG=$(logfile $VM)
+  echo "$MSG"
+  echo -n $(ts) >> $LOG
+  echo "$MSG"   >> $LOG
+  chown $VM_USER $LOG
+}
+
+###############################################################################
+# if there's a vnc port for the VM defined in the vboxheadless_vnc_ports
+# variable, return the port number.  otherwise, return nothing
+
+vboxheadless_getport() {
+  local VM
+  VM=$1
+  PORT=$(perl -e '
+my($vm, $portlist) = @ARGV;
+my %ports = split /\s+/, $portlist;
+if (exists $ports{$vm}) {
+    print $ports{$vm};
+}
+' "$VM" "$vboxheadless_vnc_ports")
+  echo $PORT
+}
+
+###############################################################################
+
+vboxheadless_vmstart() {
+  local VM
+  VM=$1
+  PORT=$(vboxheadless_getport $VM)
+  LOG=$(logfile $VM)
+  OUTPUT=">>$LOG 2>&1"
+  if [ "$PORT" != "" ]; then
+    log "Starting VM: $VM (vnc port $PORT)..."
+    $SU "$NOHUP $VBOXHEADLESS --vnc --vncport $PORT --startvm $VM $OUTPUT &"
+  else
+    echo "Starting VM: $VM (no vnc)..."
+    $SU "$NOHUP $VBOXHEADLESS --startvm $VM $OUTPUT &"
+  fi
+}
+
+###############################################################################
+
+vboxheadless_vmstop() {
+  local VM
+  VM=$1
+  log "Stopping VM: $VM ..."
+  $SU "$VBOXMANAGE controlvm \"$VM\" acpipowerbutton"
+}
+
+###############################################################################
+
+vboxheadless_vmpower() {
+  local VM
+  VM=$1
+  log "Powering off VM: $VM ..."
+  $SU "$VBOXMANAGE controlvm \"$VM\" poweroff"
+}
+
+###############################################################################
+
+vboxheadless_start() {
+  if [ "$vboxheadless_vms" != "" ]; then
+    for VM in $vboxheadless_vms; do
+      vboxheadless_vmstart $VM
+    done
+  fi
+}
+
+###############################################################################
+
+vboxheadless_stop() {
+  # NOTE: this stops all running VM's. Not just the ones listed in
+  # vboxheadless_vms
+  $SU "$VBOXMANAGE list runningvms" | while read VM; do
+    vboxheadless_vmstop "$VM"
+  done
+  RUNNING_MACHINES=`$SU "$VBOXMANAGE list runningvms" | wc -l`
+  while [ $RUNNING_MACHINES != 0 ]; do
+    sleep 5
+    RUNNING_MACHINES=`$SU "$VBOXMANAGE list runningvms" | wc -l`
+  done
+}
+
+###############################################################################
+
+vboxheadless_status() {
+  echo "The following virtual machines are currently running:"
+  $SU "$VBOXMANAGE list runningvms" | perl -ne '/\{(.*)\}/; print "$1\n";' |\
+  while read UUID; do
+    $SU "$VBOXMANAGE showvminfo ${UUID%% *}"|PORTS="$vboxheadless_vnc_ports" \
+perl -e '
+my($name,$state,$uuid,$guest);
+while (my $line = <>) {
+    ($name)  = $line =~ /^Name:\s*(.+)$/     unless ($name);
+    ($guest) = $line =~ /^Guest OS:\s*(.+)$/ unless ($guest);
+    ($state) = $line =~ /^State:\s*(.+)$/    unless ($state);
+    ($uuid)  = $line =~ /^UUID:\s*(.+)$/     unless ($uuid);
+}
+print "  $name, $guest (uuid $uuid)\n";
+print "    $state\n";
+my %ports = split /\s+/, $ENV{PORTS};
+if (exists $ports{$name}) {
+    print "    vnc port $ports{$name}\n";
+}
+'
+  done
+}
+
+###############################################################################
+
+load_rc_config $name
+run_rc_command "$@"
