@@ -66,11 +66,12 @@ logfile() {
 
 ###############################################################################
 
-log() {
-  local VM,MSG
+do_log() {
+  local VM
+  local MSG
   VM=$1
   MSG=$2
-  LOG=$(logfile $VM)
+  LOG=$(logfile "$VM")
   echo "$MSG"
   echo -n $(ts) >> $LOG
   echo "$MSG"   >> $LOG
@@ -94,13 +95,19 @@ if (exists $ports{$vm}) {
   echo $PORT
 }
 
+vboxheadless_avahi_file() {
+  local VM
+  VM=$1
+  echo "/usr/local/etc/avahi/services/rfb-$VM.service"
+}
+
 vboxheadless_register_avahi() {
   local VM
   VM=$1
   if checkyesno avahi_daemon_enable ; then
-    PORT=$(vboxheadless_getport $VM)
-    FILE="/usr/local/etc/avahi/services/rfb-$VM.service"
-    log "Registering vnc port $PORT for $VM with Avahi"
+    PORT=$(vboxheadless_getport "$VM")
+    FILE=$(vboxheadless_avahi_file "$VM")
+    do_log "$VM" "Registering vnc port $PORT for $VM with Avahi"
     cat <<SERVICE >$FILE
 <?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
@@ -120,10 +127,10 @@ vboxheadless_deregister_avahi() {
   local VM
   VM=$1
   if checkyesno avahi_daemon_enable ; then
-    FILE="/usr/local/etc/avahi/services/rfb-$VM.service"
+    FILE=$(vboxheadless_avahi_file "$VM")
     if [ -f $FILE ] ; then
-      PORT=$(vboxheadless_getport $VM)
-      log "Deregistering vnc port $PORT for $VM with Avahi"
+      PORT=$(vboxheadless_getport "$VM")
+      do_log "$VM" "Deregistering vnc port $PORT for $VM with Avahi"
       rm -f $FILE
       $AVAHI --reload
     fi
@@ -135,16 +142,16 @@ vboxheadless_deregister_avahi() {
 vboxheadless_vmstart() {
   local VM
   VM=$1
-  PORT=$(vboxheadless_getport $VM)
-  LOG=$(logfile $VM)
+  PORT=$(vboxheadless_getport "$VM")
+  LOG=$(logfile "$VM")
   OUTPUT=">>$LOG 2>&1"
   if [ "$PORT" != "" ]; then
-    log "Starting VM: $VM (vnc port $PORT)..."
-    $SU "$NOHUP $VBOXHEADLESS --vnc --vncport $PORT --startvm $VM $OUTPUT &"
+    do_log "$VM" "Starting VM: $VM (vnc port $PORT)..."
+    $SU "$NOHUP $VBOXHEADLESS --vnc --vncport $PORT --startvm \"$VM\" $OUTPUT &"
     vboxheadless_register_avahi "$VM"
   else
     echo "Starting VM: $VM (no vnc)..."
-    $SU "$NOHUP $VBOXHEADLESS --startvm $VM $OUTPUT &"
+    $SU "$NOHUP $VBOXHEADLESS --startvm \"$VM\" $OUTPUT &"
   fi
 }
 
@@ -153,7 +160,7 @@ vboxheadless_vmstart() {
 vboxheadless_vmstop() {
   local VM
   VM=$1
-  log "Stopping VM: $VM ..."
+  do_log "$VM" "Stopping VM: $VM ..."
   $SU "$VBOXMANAGE controlvm \"$VM\" acpipowerbutton"
   vboxheadless_deregister_avahi "$VM"
 }
@@ -163,7 +170,7 @@ vboxheadless_vmstop() {
 vboxheadless_vmpower() {
   local VM
   VM=$1
-  log "Powering off VM: $VM ..."
+  do_log "$VM" "Powering off VM: $VM ..."
   $SU "$VBOXMANAGE controlvm \"$VM\" poweroff"
 }
 
@@ -172,9 +179,15 @@ vboxheadless_vmpower() {
 vboxheadless_start() {
   if [ "$vboxheadless_vms" != "" ]; then
     for VM in $vboxheadless_vms; do
-      vboxheadless_vmstart $VM
+      vboxheadless_vmstart "$VM"
     done
   fi
+}
+
+###############################################################################
+
+vboxheadless_running_vmlist() {
+  $SU "$VBOXMANAGE list runningvms" | perl -ne 's/\s+\{.*\}//; s/"//g; print "$_";'
 }
 
 ###############################################################################
@@ -182,13 +195,13 @@ vboxheadless_start() {
 vboxheadless_stop() {
   # NOTE: this stops all running VM's. Not just the ones listed in
   # vboxheadless_vms
-  $SU "$VBOXMANAGE list runningvms" | while read VM; do
+  vboxheadless_running_vmlist | while read VM; do
     vboxheadless_vmstop "$VM"
   done
-  RUNNING_MACHINES=`$SU "$VBOXMANAGE list runningvms" | wc -l`
+  RUNNING_MACHINES=`vboxheadless_running_vmlist | wc -l`
   while [ $RUNNING_MACHINES != 0 ]; do
     sleep 5
-    RUNNING_MACHINES=`$SU "$VBOXMANAGE list runningvms" | wc -l`
+    RUNNING_MACHINES=`vboxheadless_running_vmlist | wc -l`
   done
 }
 
@@ -196,7 +209,7 @@ vboxheadless_stop() {
 
 vboxheadless_status() {
   echo "The following virtual machines are currently running:"
-  $SU "$VBOXMANAGE list runningvms" | perl -ne '/\{(.*)\}/; print "$1\n";' |\
+  vboxheadless_running_vmlist |\
   while read UUID; do
     $SU "$VBOXMANAGE showvminfo ${UUID%% *}"|PORTS="$vboxheadless_vnc_ports" \
 perl -e '
