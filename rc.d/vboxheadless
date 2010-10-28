@@ -120,11 +120,13 @@ vboxheadless_deregister_avahi() {
   local VM
   VM=$1
   if checkyesno avahi_daemon_enable ; then
-    PORT=$(vboxheadless_getport $VM)
     FILE="/usr/local/etc/avahi/services/rfb-$VM.service"
-    log "Deregistering vnc port $PORT for $VM with Avahi"
-    rm -f $FILE
-    $AVAHI --reload
+    if [ -f $FILE ] ; then
+      PORT=$(vboxheadless_getport $VM)
+      log "Deregistering vnc port $PORT for $VM with Avahi"
+      rm -f $FILE
+      $AVAHI --reload
+    fi
   fi
 }
 
